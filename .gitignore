@@ -1,0 +1,12 @@
+*
+
+# code
+!/src/
+!/src/**
+
+# cmake
+!CMakeLists.txt
+!CMakeCache.txt
+!iso.xml
+
+!.gitignore
