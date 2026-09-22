@@ -198,13 +198,13 @@ CMAKE_OBJDUMP:FILEPATH=C:/PSn00bSDK/bin/mipsel-none-elf-objdump.exe
 CMAKE_PROJECT_COMPAT_VERSION:STATIC=
 
 //Value Computed by CMake
-CMAKE_PROJECT_DESCRIPTION:STATIC=PSn00bSDK template
+CMAKE_PROJECT_DESCRIPTION:STATIC=PS1 audio player
 
 //Value Computed by CMake
 CMAKE_PROJECT_HOMEPAGE_URL:STATIC=http://lameguy64.net/?page=psn00bsdk
 
 //Value Computed by CMake
-CMAKE_PROJECT_NAME:STATIC=PSn00bSDK-template
+CMAKE_PROJECT_NAME:STATIC=ps1audioPlayer
 
 //Value Computed by CMake
 CMAKE_PROJECT_SPDX_LICENSE:STATIC=
@@ -316,6 +316,15 @@ PSn00bSDK-template_SOURCE_DIR:STATIC=C:/Users/neila/Documents/ps1audioplayer
 
 //Path to a program.
 SMXLINK:FILEPATH=C:/PSn00bSDK/bin/smxlink.exe
+
+//Value Computed by CMake
+ps1audioPlayer_BINARY_DIR:STATIC=C:/Users/neila/Documents/ps1audioplayer
+
+//Value Computed by CMake
+ps1audioPlayer_IS_TOP_LEVEL:STATIC=ON
+
+//Value Computed by CMake
+ps1audioPlayer_SOURCE_DIR:STATIC=C:/Users/neila/Documents/ps1audioplayer
 
 
 ########################
