@@ -1,0 +1,11 @@
+# ninja log v7
+4	174	8118067056579386	CMakeFiles/template.dir/main.c.obj	6b8cd1d61bb92a60
+175	1574	8118067072196820	template.elf	5c4f34fad49ce107
+175	1574	8118067072196820	template.exe	5c4f34fad49ce107
+175	1574	8118067072196820	template.map	5c4f34fad49ce107
+175	1574	8118067072196820	C:/Users/neila/Documents/ps1audioplayer/template.exe	5c4f34fad49ce107
+175	1574	8118067072196820	C:/Users/neila/Documents/ps1audioplayer/template.map	5c4f34fad49ce107
+1575	2320	8118067079694032	template.bin	af2fe302cf66e2de
+1575	2320	8118067079694032	template.cue	af2fe302cf66e2de
+1575	2320	8118067079694032	C:/Users/neila/Documents/ps1audioplayer/template.bin	af2fe302cf66e2de
+1575	2320	8118067079694032	C:/Users/neila/Documents/ps1audioplayer/template.cue	af2fe302cf66e2de

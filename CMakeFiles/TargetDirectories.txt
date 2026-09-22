@@ -1,0 +1,4 @@
+C:/Users/neila/Documents/ps1audioplayer/CMakeFiles/template.dir
+C:/Users/neila/Documents/ps1audioplayer/CMakeFiles/iso.dir
+C:/Users/neila/Documents/ps1audioplayer/CMakeFiles/edit_cache.dir
+C:/Users/neila/Documents/ps1audioplayer/CMakeFiles/rebuild_cache.dir
