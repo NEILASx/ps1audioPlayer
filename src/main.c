@@ -226,6 +226,12 @@ int16_t sine_sample(int freq)
 
 static int active_buffer = 0;
 
+#define SECTOR_SIZE 2048
+
+uint8_t audio_buffer[2][SECTOR_SIZE] __attribute__((aligned(4)));
+uint16_t buffer_pos = 0x40; // adpcm starts at 0x40 for the file
+uint8_t buffer_idx = 0; // when the spu is reading from buffer_idx, we write into the other buffer.
+
 void spu_irq_handler() {
 	// acknowledge the interrupt
 	SPU_CTRL &= ~(1 << 6);
@@ -243,19 +249,47 @@ void spu_irq_handler() {
 	static uint8_t chunk[CHUNK_SIZE] __attribute__((aligned(4)));
 
 	for (int b = 0; b < BLOCKS_PER_CHUNK; b++) {
-		int16_t samples[28];
+		for (int i = 0; i < 16; i++) {
+			chunk[(b * 16) + i] = audio_buffer[buffer_idx][buffer_pos++];
+		}
+
+		uint8_t *block = &chunk[b * 16];
+
+		uint8_t shift = block[0] & 0x0F;
+
 		for (int i = 0; i < 28; i++) {
-			samples[i] = sine_sample(1000) / 4;
+			int8_t nibble;
 
+			if (!(i & 1))
+				nibble = block[2 + i / 2] & 0x0F;
+			else
+				nibble = block[2 + i / 2] >> 4;
 
-			waveform[waveformpointer] = samples[i];
+			if (nibble & 8)
+				nibble -= 16;
+
+			int16_t sample = nibble << (12 - shift);
+
+			waveform[waveformpointer] = sample;
 
 			waveformpointer++;
 			if (waveformpointer >= WAVEFORM_SIZE)
 				waveformpointer = 0;
 		}
 
-		encode_block(samples, &chunk[b * 16]);
+		
+		// int16_t samples[28];
+		// for (int i = 0; i < 28; i++) {
+		// 	samples[i] = audio_buffer[buffer_idx][buffer_pos++];
+
+		// 	waveform[waveformpointer] = samples[i];
+
+		// 	waveformpointer++;
+		// 	if (waveformpointer >= WAVEFORM_SIZE)
+		// 		waveformpointer = 0;
+		// }
+
+		// encode_block(samples, &chunk[b * 16]);
 		if (b == BLOCKS_PER_CHUNK - 1) chunk[b * 16 + 1] = 0x03; // loop end
 	}
 
@@ -268,15 +302,46 @@ void spu_dma_handler() {
 	SPU_CTRL |= 1 << 6;
 }
 
+uint8_t cd_read_pending = 0;
+uint32_t next_sector = 0;
+
+void update_buffers() {
+	if (buffer_pos > SECTOR_SIZE - CHUNK_SIZE && !cd_read_pending) {
+		cd_read_pending = 1;
+		CdlLOC loc;
+		CdIntToPos(next_sector, &loc);
+
+		CdControl(CdlSetloc, &loc, 0);
+		CdRead(
+			1,
+			(uint32_t *)audio_buffer[buffer_idx ^ 1],
+			CdlModeSpeed
+		);
+	}
+
+	if (buffer_pos >= SECTOR_SIZE)
+    {
+        buffer_idx ^= 1;
+        buffer_pos = 0;
+    }
+
+}
+
+void read_callback(enum _CdlIntrResult status, uint8_t* result) {
+	(void)result; // unused, doc's say its something to do with a internal library
+
+	FntPrint(-1, "CD CALLBACK: %d\n", status);
+	cd_read_pending = 0;
+	next_sector++;
+	if (status == CdlComplete) {
+	}
+}
+
 #define WAVEFORM_X 50
 #define WAVEFORM_Y 120
 #define WAVEFORM_SCALE 8
 
 LINE_F2 waveform_lines[WAVEFORM_SIZE - 1];
-
-#define OT_LENGTH 8
-
-uint32_t ot[OT_LENGTH];
 
 int main(int argc, const char **argv) {
 	// Initialize the GPU and load the default font texture provided by
@@ -285,14 +350,6 @@ int main(int argc, const char **argv) {
 	FntLoad(960, 0);
 
 	CdInit();
-
-	CdlFILE file;
-	if (CdSearchFile(&file, "\\AUDIO.VEH;1") == 0) {
-		FntPrint(-1, "FILE NOT FOUND\n");
-	} else {
-		FntPrint(-1, "FOUND: %d sectors\n", file.size / 2048);
-	}
-
 	SpuInit();
 
 	EnterCriticalSection();
@@ -301,6 +358,24 @@ int main(int argc, const char **argv) {
 		DMACallback(DMA_SPU, &spu_dma_handler);
 	}
 	ExitCriticalSection();
+
+	CdReadCallback(read_callback);
+
+	CdlFILE file;
+
+	CdSearchFile(&file, "\\AUDIO.VAG;1");
+	next_sector = CdPosToInt(&file.pos);
+
+	// seek to it
+	CdControl(CdlSetloc, &file.pos, 0);
+
+	CdRead(
+		1,
+		(uint32_t *)audio_buffer[buffer_idx ^ 1],
+		CdlModeSpeed
+	);
+
+	CdReadSync(0, 0);
 
 	SPU_CTRL &= ~(1 << 6);
 
@@ -328,9 +403,9 @@ int main(int argc, const char **argv) {
 
 	FntOpen(0, 16, 320, 240, 0, 512);
 
-
 	for (;;) {
-		ClearOTagR(&ot[0], OT_LENGTH);
+		update_buffers();
+		ClearOTagR(ctx.buffers[ctx.active_buffer].ot, OT_LENGTH);
 		for (int i = 0; i < WAVEFORM_SIZE - 1; i++) {
 			int index0 = (waveformpointer + i) & (WAVEFORM_SIZE - 1);
 			int index1 = (waveformpointer + i + 1) & (WAVEFORM_SIZE - 1);
@@ -347,22 +422,19 @@ int main(int argc, const char **argv) {
 			setXY2(line, x0, y0, x1, y1);
 			setRGB0(line, 255, 255, 255);
 
-			AddPrim(&ot[0], line);
+			AddPrim(ctx.buffers[ctx.active_buffer].ot, line);
 		}
 
-		DrawOTag(&ot[0]);
+		DrawOTag(ctx.buffers[ctx.active_buffer].ot);
 
-		FntPrint(-1, "CH0 ADDR: %04x\n", SPU_CH_ADDR(0));
-		FntPrint(-1, "CH0 LOOP: %04x\n", SPU_CH_LOOP_ADDR(0));
-		FntPrint(-1, "CH0 FREQ: %04x\n", SPU_CH_FREQ(0));
-		FntPrint(-1, "CH0 VOLL: %04x\n", SPU_CH_VOL_L(0));
-		FntPrint(-1, "CH0 VOLR: %04x\n", SPU_CH_VOL_R(0));
-		FntPrint(-1, "IRQ ADDR: %04x\n", SPU_IRQ_ADDR);
-		FntPrint(-1, "SPU CTRL: %04x\n", SPU_CTRL);
-		FntPrint(-1, "SPU STAT: %04x\n", SPU_STAT);
-		FntPrint(-1, "KEY ON1: %04x\n", SPU_KEY_ON1);
-		FntPrint(-1, "CH0 ADSR1: %04x\n", SPU_CH_ADSR1(0));
-		FntPrint(-1, "CH0 ADSR2: %04x\n", SPU_CH_ADSR2(0));
+		FntPrint(-1, "CUR TRACK: %s\n", file.name);
+		FntPrint(-1, "TRACK POS: %08x\n", file.pos);
+		FntPrint(-1, "TRACK SIZE: %u\n", file.size/2048);
+
+		FntPrint(-1, "BUF POS: %04x\n", buffer_pos);
+		FntPrint(-1, "BUF IDX: %u\n", buffer_idx);
+		FntPrint(-1, "SECTOR: %u\n", next_sector);
+		FntPrint(-1, "READING?: %u\n", cd_read_pending);
 		FntFlush(-1);
 
 		flip_buffers(&ctx);
