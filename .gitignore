@@ -8,5 +8,6 @@
 !CMakeLists.txt
 !CMakeCache.txt
 !iso.xml
+!system.cnf
 
 !.gitignore
