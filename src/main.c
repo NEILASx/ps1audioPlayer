@@ -30,6 +30,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <psxgpu.h>
+#include <psxcd.h>
 #include <psxspu.h>
 #include <psxetc.h>
 #include <stdlib.h>
@@ -153,7 +154,7 @@ void encode_block(int16_t *samples, uint8_t *out)
 
 	// i think the spu gets the shift and makes it quieter when shfit is larger.
     out[0] = (12 - shift);   // filter 0
-    out[1] = 0x00;    // loop end
+    out[1] = 0x00;
 
     for (int i = 0; i < 14; i++) {
         int s0 = samples[i * 2] >> shift;
@@ -203,6 +204,11 @@ const int16_t sine_table[256] = {
  -6393,  -5602,  -4808,  -4011,  -3212,  -2410,  -1608,   -804,
 };
 
+#define WAVEFORM_SIZE 128
+
+int16_t waveform[WAVEFORM_SIZE] = {0};
+int waveformpointer = 0;
+
 static uint32_t phase = 0;
 
 int16_t sine_sample(int freq)
@@ -240,6 +246,13 @@ void spu_irq_handler() {
 		int16_t samples[28];
 		for (int i = 0; i < 28; i++) {
 			samples[i] = sine_sample(1000) / 4;
+
+
+			waveform[waveformpointer] = samples[i];
+
+			waveformpointer++;
+			if (waveformpointer >= WAVEFORM_SIZE)
+				waveformpointer = 0;
 		}
 
 		encode_block(samples, &chunk[b * 16]);
@@ -255,11 +268,30 @@ void spu_dma_handler() {
 	SPU_CTRL |= 1 << 6;
 }
 
+#define WAVEFORM_X 50
+#define WAVEFORM_Y 120
+#define WAVEFORM_SCALE 8
+
+LINE_F2 waveform_lines[WAVEFORM_SIZE - 1];
+
+#define OT_LENGTH 8
+
+uint32_t ot[OT_LENGTH];
+
 int main(int argc, const char **argv) {
 	// Initialize the GPU and load the default font texture provided by
 	// PSn00bSDK at (960, 0) in VRAM.
 	ResetGraph(0);
 	FntLoad(960, 0);
+
+	CdInit();
+
+	CdlFILE file;
+	if (CdSearchFile(&file, "\\AUDIO.VEH;1") == 0) {
+		FntPrint(-1, "FILE NOT FOUND\n");
+	} else {
+		FntPrint(-1, "FOUND: %d sectors\n", file.size / 2048);
+	}
 
 	SpuInit();
 
@@ -288,34 +320,38 @@ int main(int argc, const char **argv) {
 
 	// Set up our rendering context.
 	RenderContext ctx;
-	setup_context(&ctx, SCREEN_XRES, SCREEN_YRES, 63, 0, 127);
+	setup_context(&ctx, SCREEN_XRES, SCREEN_YRES, 0, 0, 0);
 
 	int x  = 0, y  = 0;
 	int dx = 1, dy = 1;
 
+
 	FntOpen(0, 16, 320, 240, 0, 512);
 
+
 	for (;;) {
-		// Update the position and velocity of the bouncing square.
-		if (x < 0 || x > (SCREEN_XRES - 64))
-			dx = -dx;
-		if (y < 0 || y > (SCREEN_YRES - 64))
-			dy = -dy;
+		ClearOTagR(&ot[0], OT_LENGTH);
+		for (int i = 0; i < WAVEFORM_SIZE - 1; i++) {
+			int index0 = (waveformpointer + i) & (WAVEFORM_SIZE - 1);
+			int index1 = (waveformpointer + i + 1) & (WAVEFORM_SIZE - 1);
 
-		x += dx;
-		y += dy;
+			int x0 = WAVEFORM_X + i;
+			int y0 = WAVEFORM_Y - (waveform[index0] >> WAVEFORM_SCALE);
 
-		// Draw the square by allocating a TILE (i.e. untextured solid color
-		// rectangle) primitive at Z = 1.
-		TILE *tile = (TILE *) new_primitive(&ctx, 1, sizeof(TILE));
+			int x1 = WAVEFORM_X + i + 1;
+			int y1 = WAVEFORM_Y - (waveform[index1] >> WAVEFORM_SCALE);
 
-		setTile(tile);
-		setXY0 (tile, x, y);
-		setWH  (tile, 64, 64);
-		setRGB0(tile, 255, 255, 0);
+			LINE_F2 *line = &waveform_lines[i];
 
-		// Draw some text in front of the square (Z = 0, primitives with higher
-		// Z indices are drawn first).
+			setLineF2(line);
+			setXY2(line, x0, y0, x1, y1);
+			setRGB0(line, 255, 255, 255);
+
+			AddPrim(&ot[0], line);
+		}
+
+		DrawOTag(&ot[0]);
+
 		FntPrint(-1, "CH0 ADDR: %04x\n", SPU_CH_ADDR(0));
 		FntPrint(-1, "CH0 LOOP: %04x\n", SPU_CH_LOOP_ADDR(0));
 		FntPrint(-1, "CH0 FREQ: %04x\n", SPU_CH_FREQ(0));
