@@ -205,8 +205,12 @@ const int16_t sine_table[256] = {
 };
 
 #define WAVEFORM_SIZE 128
+#define WAVEFORM_X 50
+#define WAVEFORM_Y 120
+#define WAVEFORM_SCALE 8
 
 int16_t waveform[WAVEFORM_SIZE] = {0};
+LINE_F2 waveform_lines[WAVEFORM_SIZE - 1];
 int waveformpointer = 0;
 
 static uint32_t phase = 0;
@@ -229,8 +233,10 @@ static int active_buffer = 0;
 #define SECTOR_SIZE 2048
 
 uint8_t audio_buffer[2][SECTOR_SIZE] __attribute__((aligned(4)));
-uint16_t buffer_pos = 0x40; // adpcm starts at 0x40 for the file
+volatile uint16_t buffer_pos = 0x40; // adpcm starts at 0x40 for the file
 uint8_t buffer_idx = 0; // when the spu is reading from buffer_idx, we write into the other buffer.
+
+uint8_t need_cd_read = 0;
 
 void spu_irq_handler() {
 	// acknowledge the interrupt
@@ -238,12 +244,12 @@ void spu_irq_handler() {
 
 	active_buffer ^= 1;
 
-	uint32_t addr = active_buffer
-		? BUFFER1_ADDR
-		: BUFFER0_ADDR;
+	uint32_t playing_buffer = active_buffer ? BUFFER0_ADDR : BUFFER1_ADDR;
+	uint32_t write_buffer   = active_buffer ? BUFFER1_ADDR : BUFFER0_ADDR;
 
-	SPU_IRQ_ADDR = getSPUAddr(addr);
-	SPU_CH_LOOP_ADDR(0) = getSPUAddr(addr);
+	SPU_IRQ_ADDR        = getSPUAddr(write_buffer);
+	SPU_CH_LOOP_ADDR(0) = getSPUAddr(write_buffer);
+	SpuSetTransferStartAddr(write_buffer);
 
 	static int sampleidx = 0;
 	static uint8_t chunk[CHUNK_SIZE] __attribute__((aligned(4)));
@@ -254,6 +260,8 @@ void spu_irq_handler() {
 		}
 
 		uint8_t *block = &chunk[b * 16];
+
+		block[1] = 0x02;
 
 		uint8_t shift = block[0] & 0x0F;
 
@@ -290,10 +298,17 @@ void spu_irq_handler() {
 		// }
 
 		// encode_block(samples, &chunk[b * 16]);
-		if (b == BLOCKS_PER_CHUNK - 1) chunk[b * 16 + 1] = 0x03; // loop end
 	}
 
-    SpuSetTransferStartAddr(addr);
+	chunk[(BLOCKS_PER_CHUNK - 1) * 16 + 1] = 0x03;
+
+	if (buffer_pos >= SECTOR_SIZE) {
+		need_cd_read = 1;
+        buffer_idx ^= 1;
+        buffer_pos = 0;
+    }
+
+    SpuSetTransferStartAddr(write_buffer);
     SpuWrite((uint32_t *)chunk, CHUNK_SIZE);
 }
 
@@ -306,25 +321,14 @@ uint8_t cd_read_pending = 0;
 uint32_t next_sector = 0;
 
 void update_buffers() {
-	if (buffer_pos > SECTOR_SIZE - CHUNK_SIZE && !cd_read_pending) {
-		cd_read_pending = 1;
-		CdlLOC loc;
-		CdIntToPos(next_sector, &loc);
-
-		CdControl(CdlSetloc, &loc, 0);
-		CdRead(
-			1,
-			(uint32_t *)audio_buffer[buffer_idx ^ 1],
-			CdlModeSpeed
-		);
-	}
-
-	if (buffer_pos >= SECTOR_SIZE)
-    {
-        buffer_idx ^= 1;
-        buffer_pos = 0;
+    if (need_cd_read && !cd_read_pending) {
+        need_cd_read    = 0;
+        cd_read_pending = 1;
+        CdlLOC loc;
+        CdIntToPos(next_sector, &loc);
+        CdControl(CdlSetloc, &loc, 0);
+        CdRead(1, (uint32_t *)audio_buffer[buffer_idx ^ 1], CdlModeSpeed);
     }
-
 }
 
 void read_callback(enum _CdlIntrResult status, uint8_t* result) {
@@ -336,12 +340,6 @@ void read_callback(enum _CdlIntrResult status, uint8_t* result) {
 	if (status == CdlComplete) {
 	}
 }
-
-#define WAVEFORM_X 50
-#define WAVEFORM_Y 120
-#define WAVEFORM_SCALE 8
-
-LINE_F2 waveform_lines[WAVEFORM_SIZE - 1];
 
 int main(int argc, const char **argv) {
 	// Initialize the GPU and load the default font texture provided by
@@ -374,8 +372,11 @@ int main(int argc, const char **argv) {
 		(uint32_t *)audio_buffer[buffer_idx ^ 1],
 		CdlModeSpeed
 	);
+	next_sector++;
 
 	CdReadSync(0, 0);
+	buffer_idx ^= 1;
+	buffer_pos = 0x30; // skip 48-byte VAG header
 
 	SPU_CTRL &= ~(1 << 6);
 
@@ -385,13 +386,14 @@ int main(int argc, const char **argv) {
 	// set up channel
 	SPU_CH_ADDR(0) 		= getSPUAddr(0x1010);
 	SPU_CH_LOOP_ADDR(0) = getSPUAddr(0x1010);
-	SPU_CH_FREQ(0)		= 0x1000; // 44100hz
+	SPU_CH_FREQ(0)		= 0x0800; // 44100hz
 	SPU_CH_ADSR1(0)     = 0x00ff;
 	SPU_CH_ADSR2(0)		= 0x0000;
 	SPU_CH_VOL_L(0)		= 0x3fff;
 	SPU_CH_VOL_R(0)		= 0x3fff;
 
 	SPU_KEY_ON1 = 1;
+	spu_irq_handler();
 
 	// Set up our rendering context.
 	RenderContext ctx;
